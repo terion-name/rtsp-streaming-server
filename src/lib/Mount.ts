@@ -4,6 +4,7 @@ import { Client } from './Client';
 import { Mounts } from './Mounts';
 import { PublishServerHooksConfig } from './PublishServer';
 import { RtpUdp } from './RtpUdp';
+import { RtpTcp } from './RtpTcp';
 import { getDebugger, getMountInfo } from './utils';
 
 const debug = getDebugger('Mount');
@@ -16,6 +17,7 @@ export type RtspStream = {
   listenerRtcp?: RtpUdp;
   rtpStartPort: number;
   rtpEndPort: number;
+  tcpClients?: { [clientId: string]: RtpTcp };
 };
 
 export class Mount {
@@ -44,27 +46,46 @@ export class Mount {
     debug('Set up mount at path %s', path);
   }
 
-  createStream (uri: string) {
+  createStream (uri: string): RtspStream {
     const info = getMountInfo(uri);
 
-    const nextPort = this.mounts.getNextRtpPort();
-
-    if (!nextPort) {
-      throw new Error('No ports available to create the stream');
+    if (this.streams[info.streamId]) {
+      throw new Error('Stream already exists');
     }
 
-    debug('Setting up stream %s on path %s', info.streamId, info.path);
+    const rtpStartPort = this.mounts.getNextRtpPort();
 
-    this.streams[info.streamId] = {
-      clients: {},
+    if (!rtpStartPort) {
+      throw new Error('Unable to get RTP port');
+    }
+
+    debug('Creating new stream %d for mount %s with RTP port %d', info.streamId, this.path, rtpStartPort);
+
+    const stream: RtspStream = {
       id: info.streamId,
+      clients: {},
+      tcpClients: {},
       mount: this,
-      rtpEndPort: nextPort + 1, // RTCP
-      rtpStartPort: nextPort // RTP
+      rtpStartPort
     };
 
-    return this.streams[info.streamId];
+    debug('Setting up UDP listeners for stream %d', info.streamId);
+    stream.listenerRtp = new RtpUdp(rtpStartPort, stream);
+    stream.listenerRtcp = new RtpUdp(rtpStartPort + 1, stream);
 
+    this.streams[info.streamId] = stream;
+
+    // Start UDP listeners
+    Promise.all([
+      stream.listenerRtp.listen(),
+      stream.listenerRtcp.listen()
+    ]).then(() => {
+      debug('UDP listeners ready for stream %d', info.streamId);
+    }).catch(err => {
+      debug('Error starting UDP listeners for stream %d: %s', info.streamId, err.message);
+    });
+
+    return stream;
   }
 
   async setup (): Promise<void> {
@@ -73,38 +94,40 @@ export class Mount {
     for (let id in this.streams) {
       let stream = this.streams[id];
 
-      stream.listenerRtp = new RtpUdp(stream.rtpStartPort, stream);
-      stream.listenerRtcp = new RtpUdp(stream.rtpEndPort, stream);
+      // Only set up UDP listeners if we have UDP clients
+      if (Object.values(stream.clients).some(client => client.transportType === 'udp')) {
+        stream.listenerRtp = new RtpUdp(stream.rtpStartPort, stream);
+        stream.listenerRtcp = new RtpUdp(stream.rtpStartPort + 1, stream);
 
-      try {
-        await stream.listenerRtp.listen();
-        await stream.listenerRtcp.listen();
-      } catch (e) {
-        // One or two of the ports was in use, cycle them out and try another
-        if (e.errno && e.errno === 'EADDRINUSE') {
-          console.warn(`Port error on ${e.port}, for stream ${stream.id} using another port`);
-          portError = true;
+        try {
+          await stream.listenerRtp.listen();
+          await stream.listenerRtcp.listen();
+        } catch (e) {
+          // One or two of the ports was in use, cycle them out and try another
+          if (e.errno && e.errno === 'EADDRINUSE') {
+            console.warn(`Port error on ${e.port}, for stream ${stream.id} using another port`);
+            portError = true;
 
-          try {
-            await stream.listenerRtp.close();
-            await stream.listenerRtcp.close();
-          } catch (e) {
-            // Ignore, dont care if couldnt close
-            console.log(e);
+            try {
+              await stream.listenerRtp.close();
+              await stream.listenerRtcp.close();
+            } catch (e) {
+              // Ignore, dont care if couldnt close
+              console.log(e);
+            }
+
+            this.mounts.returnRtpPortToPool(stream.rtpStartPort);
+            const nextStartPort = this.mounts.getNextRtpPort();
+            if (!nextStartPort) {
+              throw new Error('Unable to get another start port');
+            }
+
+            stream.rtpStartPort = nextStartPort;
+            stream.rtpEndPort = nextStartPort + 1;
+          } else {
+            throw e;
           }
-
-          this.mounts.returnRtpPortToPool(stream.rtpStartPort);
-          const nextStartPort = this.mounts.getNextRtpPort();
-          if (!nextStartPort) {
-            throw new Error('Unable to get another start port');
-          }
-
-          stream.rtpStartPort = nextStartPort;
-          stream.rtpEndPort = stream.rtpEndPort + 1;
-          break;
         }
-
-        return e;
       }
     }
 
