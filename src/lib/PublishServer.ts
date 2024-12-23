@@ -323,9 +323,9 @@ export class PublishServer {
     });
     
     // Remove the mount from mounts map
-    if (this.mounts.mounts[mount.path]) {
+    if (this.mounts.getMount(mount.path)) {
       debug('Removing mount %s from mounts map', mount.path);
-      delete this.mounts.mounts[mount.path];
+      this.mounts.deleteMount(mount.path);
     }
     
     // Remove from active sessions and clean up socket
