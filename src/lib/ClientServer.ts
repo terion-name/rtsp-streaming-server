@@ -59,6 +59,19 @@ export class ClientServer {
           return res.end();
       }
     });
+
+    // Monitor stalled mounts
+    const checkMounts = () => {
+      Object.values(this.clients).forEach(client => {
+        const mount = this.mounts.getMount(client.mount.path);
+        if (!mount) {
+          debug('Mount %s no longer exists, closing client %s', client.mount.path, client.id);
+          client.close();
+          delete this.clients[client.id];
+        }
+      });
+    };
+    setInterval(checkMounts, 1000);
   }
 
   async start (): Promise<void> {
@@ -237,6 +250,7 @@ export class ClientServer {
     debug('%s:%s tearing down client', req.socket.remoteAddress, req.socket.remotePort);
     const client = this.clients[req.headers.session];
     client.close();
+    delete this.clients[req.headers.session];
 
     res.end();
   }

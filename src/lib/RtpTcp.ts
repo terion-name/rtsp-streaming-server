@@ -12,6 +12,7 @@ export class RtpTcp {
   rtcpChannel: number;
   private sendQueue: Buffer[];
   private sending: boolean;
+  private closed: boolean;
 
   constructor(stream: RtspStream, clientSocket: Socket, rtpChannel: number = 0, rtcpChannel: number = 1) {
     this.stream = stream;
@@ -21,17 +22,28 @@ export class RtpTcp {
     this.rtcpChannel = rtcpChannel;
     this.sendQueue = [];
     this.sending = false;
+    this.closed = false;
 
     debug('Created RtpTcp handler with channels RTP: %d, RTCP: %d', rtpChannel, rtcpChannel);
 
-    // Handle socket drain event
+    // Handle socket events
     this.clientSocket.on('drain', () => {
       this.processQueue();
+    });
+
+    this.clientSocket.on('error', (err) => {
+      debug('Socket error: %s', err.message);
+      this.close();
+    });
+
+    this.clientSocket.on('close', () => {
+      debug('Socket closed');
+      this.close();
     });
   }
 
   private async processQueue() {
-    if (this.sending || this.sendQueue.length === 0) return;
+    if (this.closed || this.sending || this.sendQueue.length === 0) return;
     this.sending = true;
 
     while (this.sendQueue.length > 0) {
@@ -47,6 +59,8 @@ export class RtpTcp {
   }
 
   private queuePacket(packet: Buffer, isRtp: boolean) {
+    if (this.closed) return;
+
     const header = Buffer.alloc(4);
     header.writeUInt8(0x24, 0); // $ character
     header.writeUInt8(isRtp ? this.rtpChannel : this.rtcpChannel, 1);
@@ -58,21 +72,31 @@ export class RtpTcp {
   }
 
   sendInterleavedRtp(buffer: Buffer): void {
-    if (!this.interleaved || !this.clientSocket) return;
+    if (this.closed || !this.interleaved || !this.clientSocket) return;
     debug('Queueing RTP packet over TCP, channel %d, length %d', this.rtpChannel, buffer.length);
     this.queuePacket(buffer, true);
   }
 
   sendInterleavedRtcp(buffer: Buffer): void {
-    if (!this.interleaved || !this.clientSocket) return;
+    if (this.closed || !this.interleaved || !this.clientSocket) return;
     debug('Queueing RTCP packet over TCP, channel %d, length %d', this.rtcpChannel, buffer.length);
     this.queuePacket(buffer, false);
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    
     debug('Closing RtpTcp handler');
+    this.sendQueue = [];
+    
     if (this.clientSocket) {
-      this.clientSocket.end();
+      try {
+        this.clientSocket.end();
+        this.clientSocket.destroy();
+      } catch (err) {
+        debug('Error closing socket: %s', err.message);
+      }
     }
   }
 }

@@ -66,7 +66,8 @@ export class Mount {
       clients: {},
       tcpClients: {},
       mount: this,
-      rtpStartPort
+      rtpStartPort,
+      rtpEndPort: rtpStartPort + 1
     };
 
     debug('Setting up UDP listeners for stream %d', info.streamId);
@@ -136,25 +137,39 @@ export class Mount {
     }
   }
 
-  close () {
-    let ports = [];
-
-    for (let id in this.streams) {
-      const stream = this.streams[id];
-      if (stream) {
-        for (let id in stream.clients) {
-          const client = stream.clients[id];
-          console.log('Closing Client', client.id);
-          client.close();
-        }
-
-        stream.listenerRtp && stream.listenerRtp.close();
-        stream.listenerRtcp && stream.listenerRtcp.close();
+  close(): number[] {
+    const ports: number[] = [];
+    
+    // Close all streams and collect their ports
+    Object.values(this.streams).forEach(stream => {
+      if (stream.listenerRtp) {
+        ports.push(stream.listenerRtp.port);
+        stream.listenerRtp.close();
       }
-
-      ports.push(stream.rtpStartPort);
-    }
-
+      if (stream.listenerRtcp) {
+        ports.push(stream.listenerRtcp.port);
+        stream.listenerRtcp.close();
+      }
+      
+      // Close all client connections
+      Object.values(stream.clients).forEach(client => {
+        debug('Closing client %s due to mount cleanup', client.id);
+        client.close();
+      });
+      
+      // Clear clients map
+      stream.clients = {};
+      
+      // Clear TCP clients map
+      if (stream.tcpClients) {
+        Object.values(stream.tcpClients).forEach(tcpClient => {
+          tcpClient.close();
+        });
+        stream.tcpClients = {};
+      }
+    });
+    
+    this.streams = {};
     return ports;
   }
 

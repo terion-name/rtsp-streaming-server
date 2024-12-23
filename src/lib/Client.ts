@@ -3,6 +3,7 @@ import { RtspRequest } from 'rtsp-server';
 import { v4 as uuid } from 'uuid';
 import { Socket as NetSocket } from 'net';
 import { RtpTcp } from './RtpTcp';
+import { RtpUdp } from './RtpUdp';
 
 import { Mount, RtspStream } from './Mount';
 import { getDebugger, getMountInfo } from './utils';
@@ -19,6 +20,7 @@ export class Client {
 
   transportType: 'udp' | 'tcp';
   rtpTcp?: RtpTcp;
+  rtpUdp?: RtpUdp;
 
   remoteAddress: string;
   remoteRtcpPort: number;
@@ -46,6 +48,17 @@ export class Client {
     }
 
     this.remoteAddress = req.socket.remoteAddress.replace('::ffff:', '');
+
+    // Handle client disconnection
+    req.socket.on('close', () => {
+      debug('Client socket closed: %s', this.id);
+      this.close();
+    });
+
+    req.socket.on('error', (err) => {
+      debug('Client socket error: %s, Error: %s', this.id, err.message);
+      this.close();
+    });
 
     // Check transport type
     if (req.headers.transport.toLowerCase().includes('tcp')) {
@@ -168,6 +181,23 @@ export class Client {
     if (!this.open) return;
     this.open = false;
 
+    // Remove from stream's clients
+    if (this.stream && this.stream.clients) {
+      delete this.stream.clients[this.id];
+    }
+
+    // Close TCP connection if exists
+    if (this.rtpTcp) {
+      this.rtpTcp.close();
+      this.rtpTcp = undefined;
+    }
+
+    // Close UDP connection if exists
+    if (this.rtpUdp) {
+      await this.rtpUdp.close();
+      this.rtpUdp = undefined;
+    }
+
     if (this.transportType === 'tcp' && this.rtpTcp) {
       this.rtpTcp.close();
       // Remove TCP client from the stream's tcpClients map
@@ -176,8 +206,8 @@ export class Client {
       }
     } else if (this.transportType === 'udp') {
       try {
-        await this.rtpServer.close();
-        await this.rtcpServer.close();
+        this.rtpServer.close();
+        this.rtcpServer.close();
       } catch (e) {
         console.warn('Error closing UDP servers:', e);
       }
