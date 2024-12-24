@@ -70,7 +70,7 @@ export class Client {
     }
   }
 
-  private setupTcpTransport(req: RtspRequest): void {
+  protected setupTcpTransport(req: RtspRequest): void {
     const interleavedMatch = /interleaved=(\d+)-(\d+)/.exec(req.headers.transport);
     const rtpChannel = interleavedMatch ? parseInt(interleavedMatch[1], 10) : 0;
     const rtcpChannel = interleavedMatch ? parseInt(interleavedMatch[2], 10) : 1;
@@ -84,7 +84,7 @@ export class Client {
     this.stream.tcpClients[this.id] = this.rtpTcp;
   }
 
-  private setupUdpTransport(req: RtspRequest): void {
+  protected setupUdpTransport(req: RtspRequest): void {
     const portMatch = req.headers.transport.match(clientPortRegex);
     if (!portMatch) {
       throw new Error('Unable to find client ports in transport header');
@@ -264,7 +264,7 @@ export class Client {
   /**
    *
    */
-  private async listen (): Promise<void> {
+  protected async listen (): Promise<void> {
     return new Promise((resolve, reject) => {
       function onError (err: Error) {
         return reject(err);
@@ -285,7 +285,7 @@ export class Client {
     });
   }
 
-  private setupServerPorts (): void {
+  protected setupServerPorts (): void {
     const rtpServerPort = this.mount.mounts.getNextRtpPort();
     if (!rtpServerPort) {
       throw new Error('Unable to get next RTP Server Port');
