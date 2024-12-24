@@ -159,7 +159,13 @@ export class ClientServer {
     let clientWrapper: ClientWrapper;
 
     if (!req.headers.session) {
-      clientWrapper = new ClientWrapper(this, req);
+      try {
+        clientWrapper = new ClientWrapper(this, req);
+      } catch (e) {
+        debug('%s:%s - Mount not found, sending 404: %o', req.socket.remoteAddress, req.socket.remotePort, req.uri);
+        res.statusCode = 404;
+        return res.end();
+      }
       this.clients[clientWrapper.id] = clientWrapper;
     } else if (this.clients[req.headers.session]) {
       clientWrapper = this.clients[req.headers.session];
