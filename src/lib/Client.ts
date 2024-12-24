@@ -100,6 +100,9 @@ export class Client {
     this.rtpServer = createSocket('udp4');
     this.rtcpServer = createSocket('udp4');
 
+    // Initialize RtpUdp instance
+    this.rtpUdp = new RtpUdp(this.rtpServerPort!, this.stream);
+
     // Set up UDP data handlers
     this.rtpServer.on('message', (msg: Buffer) => {
       debug('Received RTP packet from client %s, length: %d', this.id, msg.length);

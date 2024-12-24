@@ -313,7 +313,7 @@ export class PublishServer {
     return true;
   }
 
-  private handlePublisherDisconnect(mount: Mount, socket: Socket) {
+  protected handlePublisherDisconnect(mount: Mount, socket: Socket) {
     debug('Publisher disconnected for mount %s', mount.path);
     
     // Clean up the mount
